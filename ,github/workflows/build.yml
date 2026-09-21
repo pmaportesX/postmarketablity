@@ -1,0 +1,75 @@
+name: Remote Build postmarketOS samsung-j5x
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360 # Batas maksimal runtime 6 jam
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # 1. Membersihkan disk space agar cukup ruang untuk build & chroot
+      - name: Free Disk Space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/share/boost
+          sudo rm -rf /usr/lib/jvm
+          echo "=== Status Disk Space ==="
+          df -h
+
+      # 2. Menginstal paket dependensi & QEMU
+      - name: Install Dependencies & Setup QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3 git xz-utils aria2 curl tmux binfmt-support qemu-user-static
+          sudo update-binfmts --enable
+
+      # 3. Menginstal pmbootstrap langsung dari Git
+      - name: Install pmbootstrap (from Git)
+        run: |
+          git clone https://gitlab.postmarketos.org/postmarketOS/pmbootstrap.git --depth 1
+          cd pmbootstrap
+          mkdir -p ~/.local/bin
+          ln -s "$PWD/pmbootstrap.py" ~/.local/bin/pmbootstrap
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+          ~/.local/bin/pmbootstrap --version
+
+      # 4. Konfigurasi Git Identity (Dibutuhkan oleh pmbootstrap)
+      - name: Configure Git Identity
+        run: |
+          git config --global user.email "action@github.com"
+          git config --global user.name "GitHub Action"
+
+      # 5. Memulai sesi SSH Interaktif (Upterm) tanpa batasan aktor
+      - name: Start Interactive SSH Session (Upterm)
+        uses: lhotari/action-upterm@v1
+        with:
+          limit-access-to-actor: false # Mematikan kunci batasan aktor agar mudah terkoneksi
+          wait-timeout-minutes: 15     # Menunggu koneksi SSH hingga 15 menit
+
+      # 6. Meng-export file hasil build (dijalankan setelah Anda menutup sesi SSH)
+      - name: Export Build Artifacts
+        if: always()
+        run: |
+          mkdir -p ./output
+          if [ -d "$HOME/.local/var/pmbootstrap/chroot_native/tmp/binaries" ]; then
+            sudo cp -r $HOME/.local/var/pmbootstrap/chroot_native/tmp/binaries/* ./output/ || true
+          fi
+          if [ -d "/tmp/postmarketOS-export" ]; then
+            sudo cp -r /tmp/postmarketOS-export/* ./output/ || true
+          fi
+
+      # 7. Mengunggah hasil build ke GitHub Artifacts
+      - name: Upload Build Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pmos-samsung-j5x-build
+          path: ./output/
+          if-no-files-found: ignore
